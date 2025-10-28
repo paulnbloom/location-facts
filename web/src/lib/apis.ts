@@ -582,26 +582,35 @@ export function slugify(text: string): string {
 }
 
 function extractSection(doc: Document, sectionName: string, maxLength: number = 500): string | undefined {
-  // Try to find heading with section name
-  const headings = Array.from(doc.querySelectorAll('h1, h2, h3, h4'))
-  const heading = headings.find(h =>
-    h.textContent?.toLowerCase().includes(sectionName.toLowerCase())
-  )
+  // Try to find section by id first (e.g., id="introduction")
+  const sectionId = sectionName.toLowerCase().replace(/\s+/g, '-')
+  let sectionDiv = doc.getElementById(sectionId)
 
-  if (!heading) return undefined
+  // If not found by ID, try to find heading with section name
+  if (!sectionDiv) {
+    const headings = Array.from(doc.querySelectorAll('h1, h2, h3, h4'))
+    const heading = headings.find(h =>
+      h.textContent?.toLowerCase().includes(sectionName.toLowerCase())
+    )
 
-  // Get content after heading
-  let content = ''
-  let element = heading.nextElementSibling
-
-  while (element && !['H1', 'H2', 'H3', 'H4'].includes(element.tagName)) {
-    if (element.tagName === 'P') {
-      content += element.textContent + ' '
+    if (heading) {
+      sectionDiv = heading.parentElement
     }
-    element = element.nextElementSibling
-
-    if (content.length >= maxLength) break
   }
 
-  return content.trim().substring(0, maxLength)
+  if (!sectionDiv) return undefined
+
+  // Extract all paragraph text within the section
+  const paragraphs = sectionDiv.querySelectorAll('p')
+  let content = ''
+
+  for (const p of Array.from(paragraphs)) {
+    const text = p.textContent?.trim()
+    if (text && text.length > 0) {
+      content += text + ' '
+      if (content.length >= maxLength) break
+    }
+  }
+
+  return content.trim().substring(0, maxLength) || undefined
 }
