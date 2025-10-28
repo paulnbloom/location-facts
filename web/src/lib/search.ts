@@ -1,5 +1,16 @@
 import type { FactSheet, Location } from '../types'
-import { searchLocations } from '../services/nominatim'
+import {
+  nominatimSearch,
+  wikipediaSummary,
+  wikipediaParseSections,
+  openMeteoDaily,
+  openTripMapAttractions,
+  yelpTopPlaces,
+  ticketmasterEvents,
+  fetchCIAFactbook,
+  fetchStateDept,
+  recommendStay
+} from './apis'
 
 /**
  * Main search pipeline - geocodes query and fetches all fact sheet data in parallel
@@ -8,25 +19,25 @@ export async function searchLocation(
   query: string,
   creativeMode: boolean = false
 ): Promise<FactSheet> {
-  // Step 1: Geocode via Nominatim (limit=1)
-  const geocodeResults = await searchLocations(query, 1)
+  // Step 1: Geocode via Nominatim
+  const location = await nominatimSearch(query)
 
-  if (geocodeResults.length === 0) {
+  if (!location) {
     throw new Error(`No location found for query: "${query}"`)
   }
-
-  const result = geocodeResults[0]
-  const location = result.location
 
   // Step 2: Build header
   const header = buildHeader(location)
 
-  // Step 3: Fetch all data in parallel
+  // Step 3: Determine if this is a country-only search
+  const isCountry = !location.city && !location.state
+
+  // Step 4: Fetch all data in parallel
   const [
     wikipediaData,
     weatherData,
     attractionsData,
-    yelpData,
+    foodData,
     eventsData,
     ciaData,
     stateDeptData,
@@ -35,15 +46,19 @@ export async function searchLocation(
     fetchWikipediaData(location),
     fetchWeatherData(location),
     fetchAttractions(location),
-    fetchYelpData(location),
+    fetchFoodAndLodging(location),
     fetchEvents(location),
-    fetchCIAFactbook(location),
-    fetchStateDeptInfo(location),
+    fetchCIAData(location),
+    fetchStateDeptData(location),
     creativeMode ? generateCreativeOverview(location) : Promise.resolve(undefined),
   ])
 
-  // Step 4: Calculate recommended stay
-  const recommendedStay = calculateRecommendedStay(location, attractionsData.length, yelpData.restaurants.length)
+  // Step 5: Calculate recommended stay
+  const recommendedStay = recommendStay(
+    undefined, // We don't have population data yet
+    attractionsData.length,
+    isCountry
+  )
 
   return {
     header,
@@ -59,10 +74,10 @@ export async function searchLocation(
     routineEvents: eventsData.routineEvents,
     upcomingEvents: eventsData.upcomingEvents,
     attractions: attractionsData,
-    restaurants: yelpData.restaurants.slice(0, 5),
-    coffeeShops: yelpData.coffeeShops.slice(0, 5),
-    bars: yelpData.bars.slice(0, 5),
-    hotels: yelpData.hotels.slice(0, 10),
+    restaurants: foodData.restaurants,
+    coffeeShops: foodData.coffeeShops,
+    bars: foodData.bars,
+    hotels: foodData.hotels,
     recommendedStay,
     ciaSummary: ciaData,
     stateDept: stateDeptData,
@@ -71,8 +86,6 @@ export async function searchLocation(
 
 /**
  * Build header line from location
- * If country only → just country name
- * Else → postal|city, state, country
  */
 function buildHeader(location: Location): string {
   if (!location.city && !location.state) {
@@ -99,7 +112,7 @@ function buildHeader(location: Location): string {
 }
 
 /**
- * Fetch Wikipedia data: naming, famous people, history, recent events
+ * Fetch Wikipedia data
  */
 async function fetchWikipediaData(location: Location): Promise<{
   naming: string
@@ -108,55 +121,28 @@ async function fetchWikipediaData(location: Location): Promise<{
   recentEvents: string[]
 }> {
   try {
-    // Determine Wikipedia page title - try multiple fallback variants
     const pageTitles = getWikipediaPageTitles(location)
 
     for (const pageTitle of pageTitles) {
       try {
-        const response = await fetch(
-          `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(pageTitle)}`
-        )
+        const [summary, parsed] = await Promise.all([
+          wikipediaSummary(pageTitle),
+          wikipediaParseSections(pageTitle)
+        ])
 
-        if (!response.ok) continue
-
-        const summary = await response.json()
-
-        // Fetch full page content for sections
-        const contentResponse = await fetch(
-          `https://en.wikipedia.org/w/api.php?` +
-          new URLSearchParams({
-            action: 'parse',
-            page: pageTitle,
-            format: 'json',
-            prop: 'sections|text',
-            origin: '*'
-          })
-        )
-
-        if (!contentResponse.ok) {
-          // Return basic summary if full content unavailable
+        if (summary || parsed.html) {
           return {
-            naming: summary.extract || '',
-            famousPeople: [],
-            majorHistory: [],
-            recentEvents: []
+            naming: summary.substring(0, 300) || '',
+            famousPeople: extractListFromSection(parsed.html, 'notable people'),
+            majorHistory: extractListFromSection(parsed.html, 'history'),
+            recentEvents: extractListFromSection(parsed.html, 'recent')
           }
         }
-
-        const content = await contentResponse.json()
-
-        return {
-          naming: extractNaming(content, summary),
-          famousPeople: extractFamousPeople(content),
-          majorHistory: extractHistory(content),
-          recentEvents: extractRecentEvents(content)
-        }
       } catch (err) {
-        continue // Try next fallback
+        continue
       }
     }
 
-    // If all fallbacks fail, return empty
     return {
       naming: '',
       famousPeople: [],
@@ -174,9 +160,6 @@ async function fetchWikipediaData(location: Location): Promise<{
   }
 }
 
-/**
- * Get list of Wikipedia page titles to try (with fallbacks)
- */
 function getWikipediaPageTitles(location: Location): string[] {
   const titles: string[] = []
 
@@ -195,91 +178,18 @@ function getWikipediaPageTitles(location: Location): string[] {
   return titles
 }
 
-/**
- * Extract naming/etymology from Wikipedia content
- */
-function extractNaming(content: any, summary: any): string {
-  try {
-    const text = content?.parse?.text?.['*'] || ''
-    const sections = content?.parse?.sections || []
-
-    // Look for etymology/name origin sections
-    const namingSection = sections.find((s: any) =>
-      /etymology|name|origin/i.test(s.line)
-    )
-
-    if (namingSection) {
-      // Extract text from that section
-      const parser = new DOMParser()
-      const doc = parser.parseFromString(text, 'text/html')
-      const headings = doc.querySelectorAll('h2, h3')
-
-      for (const heading of Array.from(headings)) {
-        if (/etymology|name|origin/i.test(heading.textContent || '')) {
-          // Get next paragraph
-          let next = heading.nextElementSibling
-          while (next && next.tagName !== 'P') {
-            next = next.nextElementSibling
-          }
-          if (next) {
-            return next.textContent?.trim() || summary.extract.substring(0, 200)
-          }
-        }
-      }
-    }
-
-    // Fallback to summary
-    return summary.extract.substring(0, 200) + '...'
-  } catch (error) {
-    console.error('Error extracting naming:', error)
-    return summary.extract?.substring(0, 200) || ''
-  }
+function extractListFromSection(_html: string, _sectionKeyword: string): string[] {
+  // Simplified extraction - would need proper HTML parsing for production
+  // This is a placeholder that returns empty array
+  return []
 }
 
 /**
- * Extract famous people from Wikipedia content
- */
-function extractFamousPeople(_content: any): string[] {
-  try {
-    // Look for "Notable people" or similar sections
-    // This is a simplified extraction - real implementation would parse more carefully
-    return []
-  } catch (error) {
-    return []
-  }
-}
-
-/**
- * Extract major historical events
- */
-function extractHistory(_content: any): string[] {
-  try {
-    // Look for History section and extract key events
-    // This is a simplified extraction
-    return []
-  } catch (error) {
-    return []
-  }
-}
-
-/**
- * Extract recent events
- */
-function extractRecentEvents(_content: any): string[] {
-  try {
-    // Look for recent events or current events sections
-    return []
-  } catch (error) {
-    return []
-  }
-}
-
-/**
- * Fetch weather data from Open-Meteo
+ * Fetch weather data
  */
 async function fetchWeatherData(location: Location): Promise<{
-  past7DayAvg: { tempC?: number | null; precipMm?: number | null; windKph?: number | null }
-  next7DayAvg: { tempC?: number | null; precipMm?: number | null; windKph?: number | null }
+  past7DayAvg: { tempC: number | null; precipMm: number | null; windKph: number | null }
+  next7DayAvg: { tempC: number | null; precipMm: number | null; windKph: number | null }
   seasonalClimate: string
 }> {
   if (!location.lat || !location.lon) {
@@ -291,58 +201,23 @@ async function fetchWeatherData(location: Location): Promise<{
   }
 
   try {
-    const today = new Date()
-    const past7Days = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000)
+    const weather = await openMeteoDaily(location.lat, location.lon)
 
-    // Fetch historical and forecast data
-    const [historicalResponse, forecastResponse] = await Promise.all([
-      fetch(
-        `https://api.open-meteo.com/v1/forecast?` +
-        new URLSearchParams({
-          latitude: location.lat.toString(),
-          longitude: location.lon.toString(),
-          start_date: past7Days.toISOString().split('T')[0],
-          end_date: today.toISOString().split('T')[0],
-          daily: 'temperature_2m_mean,precipitation_sum,windspeed_10m_max',
-          timezone: 'auto'
-        })
-      ),
-      fetch(
-        `https://api.open-meteo.com/v1/forecast?` +
-        new URLSearchParams({
-          latitude: location.lat.toString(),
-          longitude: location.lon.toString(),
-          daily: 'temperature_2m_mean,precipitation_sum,windspeed_10m_max',
-          forecast_days: '7',
-          timezone: 'auto'
-        })
-      )
-    ])
-
-    if (!historicalResponse.ok || !forecastResponse.ok) {
-      throw new Error('Weather API failed')
+    if (!weather) {
+      return {
+        past7DayAvg: { tempC: null, precipMm: null, windKph: null },
+        next7DayAvg: { tempC: null, precipMm: null, windKph: null },
+        seasonalClimate: ''
+      }
     }
 
-    const historical = await historicalResponse.json()
-    const forecast = await forecastResponse.json()
-
-    // Calculate averages
-    const past7DayAvg = {
-      tempC: calculateAverage(historical.daily?.temperature_2m_mean),
-      precipMm: calculateSum(historical.daily?.precipitation_sum),
-      windKph: calculateMax(historical.daily?.windspeed_10m_max)
-    }
-
-    const next7DayAvg = {
-      tempC: calculateAverage(forecast.daily?.temperature_2m_mean),
-      precipMm: calculateSum(forecast.daily?.precipitation_sum),
-      windKph: calculateMax(forecast.daily?.windspeed_10m_max)
-    }
-
-    // Derive seasonal climate (simplified based on latitude)
     const seasonalClimate = deriveSeasonalClimate(location.lat)
 
-    return { past7DayAvg, next7DayAvg, seasonalClimate }
+    return {
+      past7DayAvg: weather.past7Days,
+      next7DayAvg: weather.next7Days,
+      seasonalClimate
+    }
   } catch (error) {
     console.error('Weather fetch error:', error)
     return {
@@ -353,24 +228,7 @@ async function fetchWeatherData(location: Location): Promise<{
   }
 }
 
-function calculateAverage(values: number[] | undefined): number | null {
-  if (!values || values.length === 0) return null
-  const sum = values.reduce((a, b) => a + b, 0)
-  return Math.round(sum / values.length * 10) / 10
-}
-
-function calculateSum(values: number[] | undefined): number | null {
-  if (!values || values.length === 0) return null
-  return Math.round(values.reduce((a, b) => a + b, 0) * 10) / 10
-}
-
-function calculateMax(values: number[] | undefined): number | null {
-  if (!values || values.length === 0) return null
-  return Math.round(Math.max(...values) * 10) / 10
-}
-
 function deriveSeasonalClimate(lat: number): string {
-  // Simplified climate description based on latitude
   const absLat = Math.abs(lat)
 
   if (absLat < 23.5) {
@@ -385,171 +243,76 @@ function deriveSeasonalClimate(lat: number): string {
 }
 
 /**
- * Fetch attractions from OpenTripMap
+ * Fetch attractions
  */
 async function fetchAttractions(location: Location): Promise<string[]> {
-  const apiKey = import.meta.env.VITE_OPENTRIPMAP_API_KEY
-
-  if (!apiKey || !location.lat || !location.lon) {
+  if (!location.lat || !location.lon) {
     return []
   }
 
   try {
-    const response = await fetch(
-      `https://api.opentripmap.com/0.1/en/places/radius?` +
-      new URLSearchParams({
-        apikey: apiKey,
-        radius: '10000',
-        lon: location.lon.toString(),
-        lat: location.lat.toString(),
-        kinds: 'interesting_places,tourist_facilities,cultural,architecture,museums',
-        limit: '10',
-        format: 'json'
-      })
-    )
-
-    if (!response.ok) {
-      return []
-    }
-
-    const data = await response.json()
-    return (data.features || []).map((f: any) => f.properties.name).filter(Boolean)
+    return await openTripMapAttractions(location.lat, location.lon, 15)
   } catch (error) {
-    console.error('OpenTripMap error:', error)
+    console.error('Attractions fetch error:', error)
     return []
   }
 }
 
 /**
- * Fetch Yelp data for restaurants, coffee shops, bars, and hotels
+ * Fetch food and lodging
  */
-async function fetchYelpData(location: Location): Promise<{
+async function fetchFoodAndLodging(location: Location): Promise<{
   restaurants: string[]
   coffeeShops: string[]
   bars: string[]
   hotels: string[]
 }> {
-  const apiKey = import.meta.env.VITE_YELP_API_KEY
-
-  if (!apiKey || !location.lat || !location.lon) {
+  if (!location.lat || !location.lon) {
     return { restaurants: [], coffeeShops: [], bars: [], hotels: [] }
   }
 
   try {
-    const [restaurantsRes, coffeeRes, barsRes, hotelsRes] = await Promise.all([
-      fetchYelpCategory(apiKey, location, 'restaurants', 5),
-      fetchYelpCategory(apiKey, location, 'coffee', 5),
-      fetchYelpCategory(apiKey, location, 'bars', 5),
-      fetchYelpCategory(apiKey, location, 'hotels', 10),
+    const [restaurants, coffeeShops, bars, hotels] = await Promise.all([
+      yelpTopPlaces('restaurants', location.lat, location.lon, 5),
+      yelpTopPlaces('coffee', location.lat, location.lon, 5),
+      yelpTopPlaces('bars', location.lat, location.lon, 5),
+      yelpTopPlaces('hotels', location.lat, location.lon, 10),
     ])
 
-    return {
-      restaurants: restaurantsRes,
-      coffeeShops: coffeeRes,
-      bars: barsRes,
-      hotels: hotelsRes
-    }
+    return { restaurants, coffeeShops, bars, hotels }
   } catch (error) {
-    console.error('Yelp API error:', error)
+    console.error('Food/lodging fetch error:', error)
     return { restaurants: [], coffeeShops: [], bars: [], hotels: [] }
-  }
-}
-
-async function fetchYelpCategory(
-  apiKey: string,
-  location: Location,
-  category: string,
-  limit: number
-): Promise<string[]> {
-  try {
-    const response = await fetch(
-      `https://api.yelp.com/v3/businesses/search?` +
-      new URLSearchParams({
-        latitude: location.lat!.toString(),
-        longitude: location.lon!.toString(),
-        categories: category,
-        limit: limit.toString(),
-        sort_by: 'rating'
-      }),
-      {
-        headers: {
-          Authorization: `Bearer ${apiKey}`
-        }
-      }
-    )
-
-    if (!response.ok) {
-      return []
-    }
-
-    const data = await response.json()
-    return (data.businesses || []).map((b: any) =>
-      `${b.name} (★${b.rating})`
-    )
-  } catch (error) {
-    return []
   }
 }
 
 /**
- * Fetch events from Ticketmaster
+ * Fetch events
  */
 async function fetchEvents(location: Location): Promise<{
   routineEvents: string[]
   upcomingEvents: string[]
 }> {
-  const apiKey = import.meta.env.VITE_TICKETMASTER_API_KEY
-
-  if (!apiKey || !location.lat || !location.lon) {
+  if (!location.lat || !location.lon) {
     return { routineEvents: [], upcomingEvents: [] }
   }
 
   try {
-    const response = await fetch(
-      `https://app.ticketmaster.com/discovery/v2/events.json?` +
-      new URLSearchParams({
-        apikey: apiKey,
-        latlong: `${location.lat},${location.lon}`,
-        radius: '50',
-        unit: 'km',
-        size: '20',
-        sort: 'date,asc'
-      })
-    )
-
-    if (!response.ok) {
-      return { routineEvents: [], upcomingEvents: [] }
+    const events = await ticketmasterEvents(location.lat, location.lon)
+    return {
+      routineEvents: events.routine,
+      upcomingEvents: events.upcoming
     }
-
-    const data = await response.json()
-    const events = (data._embedded?.events || []).map((e: any) =>
-      `${e.name} (${e.dates?.start?.localDate || 'TBD'})`
-    )
-
-    // Simple heuristic: classify events as routine vs upcoming
-    const routineEvents: string[] = []
-    const upcomingEvents: string[] = []
-
-    for (const event of events) {
-      // If contains "weekly" or "daily" or "monthly", consider routine
-      if (/weekly|daily|monthly|every/i.test(event)) {
-        routineEvents.push(event)
-      } else {
-        upcomingEvents.push(event)
-      }
-    }
-
-    return { routineEvents, upcomingEvents }
   } catch (error) {
-    console.error('Ticketmaster API error:', error)
+    console.error('Events fetch error:', error)
     return { routineEvents: [], upcomingEvents: [] }
   }
 }
 
 /**
- * Fetch CIA World Factbook data (requires proxy)
+ * Fetch CIA Factbook data
  */
-async function fetchCIAFactbook(location: Location): Promise<{
+async function fetchCIAData(location: Location): Promise<{
   introduction?: string
   geography?: string
   economy?: string
@@ -558,75 +321,21 @@ async function fetchCIAFactbook(location: Location): Promise<{
   error?: string
   url?: string
 }> {
-  const proxyUrl = import.meta.env.VITE_PROXY_BASE_URL
-
-  if (!proxyUrl) {
-    return {
-      error: 'Proxy not configured',
-      url: `https://www.cia.gov/the-world-factbook/countries/${slugify(location.country)}/`
-    }
-  }
-
   try {
-    const countrySlug = slugify(location.country)
-    const url = `https://www.cia.gov/the-world-factbook/countries/${countrySlug}/`
-
-    const response = await fetch(`${proxyUrl}?url=${encodeURIComponent(url)}`)
-
-    if (!response.ok) {
-      return {
-        error: 'Failed to fetch CIA Factbook',
-        url
-      }
-    }
-
-    const html = await response.text()
-
-    // Parse HTML and extract key sections
-    // This is a simplified extraction - real implementation would need careful parsing
-    const parser = new DOMParser()
-    const doc = parser.parseFromString(html, 'text/html')
-
-    return {
-      introduction: extractSection(doc, 'introduction'),
-      geography: extractSection(doc, 'geography'),
-      economy: extractSection(doc, 'economy'),
-      government: extractSection(doc, 'government'),
-      terrorism: extractSection(doc, 'terrorism'),
-      url
-    }
+    return await fetchCIAFactbook(location.country)
   } catch (error) {
-    console.error('CIA Factbook error:', error)
+    console.error('CIA Factbook fetch error:', error)
     return {
-      error: 'Error fetching CIA Factbook',
-      url: `https://www.cia.gov/the-world-factbook/countries/${slugify(location.country)}/`
+      error: 'Failed to fetch CIA Factbook',
+      url: `https://www.cia.gov/the-world-factbook/countries/${location.country.toLowerCase()}/`
     }
   }
-}
-
-function extractSection(doc: Document, sectionName: string): string | undefined {
-  // Simplified section extraction from CIA Factbook HTML
-  const heading = Array.from(doc.querySelectorAll('h2, h3')).find(
-    h => h.textContent?.toLowerCase().includes(sectionName.toLowerCase())
-  )
-
-  if (heading) {
-    let content = ''
-    let next = heading.nextElementSibling
-    while (next && !['H2', 'H3'].includes(next.tagName)) {
-      content += next.textContent + ' '
-      next = next.nextElementSibling
-    }
-    return content.trim().substring(0, 500)
-  }
-
-  return undefined
 }
 
 /**
- * Fetch US State Department travel information
+ * Fetch State Department data
  */
-async function fetchStateDeptInfo(location: Location): Promise<{
+async function fetchStateDeptData(location: Location): Promise<{
   advisoryLevel?: string | null
   notes?: string[]
   error?: string
@@ -635,112 +344,33 @@ async function fetchStateDeptInfo(location: Location): Promise<{
     advisoryUrl: string
   }
 }> {
-  const proxyUrl = import.meta.env.VITE_PROXY_BASE_URL
-  const countrySlug = slugify(location.country)
-
-  const urls = {
-    infoUrl: `https://travel.state.gov/content/travel/en/international-travel/International-Travel-Country-Information-Pages/${location.country}.html`,
-    advisoryUrl: `https://travel.state.gov/content/travel/en/traveladvisories/traveladvisories/${countrySlug}-travel-advisory.html`
-  }
-
-  if (!proxyUrl) {
-    return {
-      error: 'Proxy not configured',
-      urls
-    }
-  }
-
   try {
-    const response = await fetch(`${proxyUrl}?url=${encodeURIComponent(urls.advisoryUrl)}`)
-
-    if (!response.ok) {
-      return {
-        error: 'Failed to fetch State Dept info',
-        urls
+    return await fetchStateDept(location.country)
+  } catch (error) {
+    console.error('State Dept fetch error:', error)
+    return {
+      error: 'Failed to fetch State Department info',
+      urls: {
+        infoUrl: '',
+        advisoryUrl: ''
       }
     }
-
-    const html = await response.text()
-    const parser = new DOMParser()
-    const doc = parser.parseFromString(html, 'text/html')
-
-    // Extract advisory level and key notes
-    const advisoryLevel = doc.querySelector('.advisory-level')?.textContent?.trim() || null
-    const notes = Array.from(doc.querySelectorAll('.advisory-content p'))
-      .slice(0, 3)
-      .map(p => p.textContent?.trim() || '')
-      .filter(Boolean)
-
-    return {
-      advisoryLevel,
-      notes,
-      urls
-    }
-  } catch (error) {
-    console.error('State Dept error:', error)
-    return {
-      error: 'Error fetching State Dept info',
-      urls
-    }
   }
 }
 
 /**
- * Generate creative overview using location context
+ * Generate creative overview
  */
 async function generateCreativeOverview(location: Location): Promise<string> {
-  // In Creative Mode, generate a creative description
-  // For now, return a simple template-based description
-  const city = location.city || location.country
+  const locationName = location.city || location.country
   const descriptions = [
-    `${city} - a vibrant destination where culture and history intertwine`,
-    `Discover ${city}, where every street tells a story`,
-    `${city} awaits with its unique charm and endless possibilities`,
-    `Experience the magic of ${city}, where tradition meets modernity`,
+    `${locationName} - a vibrant destination where culture and history intertwine`,
+    `Discover ${locationName}, where every street tells a story`,
+    `${locationName} awaits with its unique charm and endless possibilities`,
+    `Experience the magic of ${locationName}, where tradition meets modernity`,
   ]
 
-  // Use deterministic selection based on location name
-  const hash = city.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0)
+  // Deterministic selection based on location name
+  const hash = locationName.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0)
   return descriptions[hash % descriptions.length]
-}
-
-/**
- * Calculate recommended stay duration based on attractions and amenities
- */
-function calculateRecommendedStay(
-  location: Location,
-  numAttractions: number,
-  numRestaurants: number
-): string {
-  // Deterministic heuristic based on location type and available data
-  let days = 2 // Base minimum
-
-  // Add days based on attractions
-  if (numAttractions > 20) days += 2
-  else if (numAttractions > 10) days += 1
-
-  // Add days based on dining scene
-  if (numRestaurants > 10) days += 1
-
-  // Country-level stays are usually longer
-  if (!location.city) days += 3
-
-  // Major cities typically need more time
-  const majorCities = ['New York', 'London', 'Paris', 'Tokyo', 'Rome', 'Barcelona', 'Amsterdam']
-  if (location.city && majorCities.some(c => location.city?.includes(c))) {
-    days += 1
-  }
-
-  return `${days} days - Allows time to explore major attractions and experience local culture`
-}
-
-/**
- * Convert location name to URL slug
- */
-function slugify(text: string): string {
-  return text
-    .toLowerCase()
-    .replace(/[^\w\s-]/g, '')
-    .replace(/[\s_-]+/g, '-')
-    .replace(/^-+|-+$/g, '')
 }
