@@ -2,6 +2,7 @@ import { useState } from 'react'
 import SearchBox from './components/SearchBox'
 import FactSheet from './components/FactSheet'
 import type { FactSheet as FactSheetType } from './types'
+import { searchLocation } from './lib/search'
 
 function App() {
   const [creativeMode, setCreativeMode] = useState(false)
@@ -9,130 +10,14 @@ function App() {
   const [error, setError] = useState<string | null>(null)
   const [factSheet, setFactSheet] = useState<FactSheetType | null>(null)
 
-  const handleSearch = async (_query: string) => {
+  const handleSearch = async (query: string) => {
     setIsLoading(true)
     setError(null)
 
     try {
-      // TODO: Implement actual API calls using _query
-      // For now, create mock data
-      await new Promise((resolve) => setTimeout(resolve, 1000)) // Simulate API call
-
-      const mockData: FactSheetType = {
-        location: {
-          city: 'New York',
-          state: 'NY',
-          country: 'USA',
-          lat: 40.7128,
-          lon: -74.006,
-        },
-        creativeOverview: creativeMode
-          ? 'The Big Apple, a vibrant metropolis where dreams are made and skyscrapers touch the clouds. A melting pot of cultures, cuisines, and endless possibilities awaits around every corner.'
-          : undefined,
-        wikipedia: {
-          nameOrigin:
-            'The city was named after the Duke of York, who would become King James II of England.',
-          famousPeople: [
-            'Franklin D. Roosevelt - 32nd President of the United States',
-            'Jay-Z - Rapper and entrepreneur',
-            'Lady Gaga - Singer and actress',
-          ],
-          historicalEvents: [
-            '1624 - Dutch settlement of New Amsterdam founded',
-            '1776 - Battle of Long Island during American Revolution',
-            '1886 - Statue of Liberty dedicated',
-            '2001 - September 11 attacks',
-          ],
-          currentEvents: [
-            'New York City continues to lead in COVID-19 recovery efforts',
-            'Major infrastructure projects underway for public transit',
-          ],
-        },
-        weather: {
-          past7Days: 'Average temperature: 65°F (18°C), partly cloudy with occasional rain',
-          next7Days: 'Forecast: 68-72°F (20-22°C), mix of sun and clouds',
-          climateSummary:
-            'Spring: Mild, 50-70°F. Summer: Warm to hot, 70-85°F. Fall: Cool, 50-70°F. Winter: Cold, 30-45°F with snow.',
-        },
-        localHappenings: {
-          routineEvents: [
-            { name: 'Broadway Shows', type: 'routine' },
-            { name: 'Weekend Markets (Union Square, Brooklyn Flea)', type: 'routine' },
-          ],
-          upcomingEvents: [
-            { name: 'NYC Marathon', date: 'November 3, 2025', type: 'upcoming' },
-            { name: 'Thanksgiving Day Parade', date: 'November 28, 2025', type: 'upcoming' },
-          ],
-          attractions: [
-            { name: 'Statue of Liberty', rating: 4.7 },
-            { name: 'Central Park', rating: 4.8 },
-            { name: 'Empire State Building', rating: 4.6 },
-            { name: 'Times Square', rating: 4.5 },
-            { name: 'Brooklyn Bridge', rating: 4.7 },
-          ],
-        },
-        foodAndLodging: {
-          restaurants: [
-            { name: 'Le Bernardin', rating: 4.9, cuisine: 'French Seafood', priceLevel: '$$$$' },
-            { name: 'Peter Luger Steak House', rating: 4.7, cuisine: 'Steakhouse', priceLevel: '$$$' },
-            { name: 'Eleven Madison Park', rating: 4.8, cuisine: 'Contemporary', priceLevel: '$$$$' },
-            { name: 'Katz\'s Delicatessen', rating: 4.6, cuisine: 'Deli', priceLevel: '$$' },
-            { name: 'Joe\'s Pizza', rating: 4.5, cuisine: 'Pizza', priceLevel: '$' },
-          ],
-          coffeeShops: [
-            { name: 'Blue Bottle Coffee', rating: 4.4 },
-            { name: 'La Colombe', rating: 4.5 },
-            { name: 'Stumptown Coffee Roasters', rating: 4.3 },
-            { name: 'Devoción', rating: 4.6 },
-            { name: 'Gregory\'s Coffee', rating: 4.2 },
-          ],
-          bars: [
-            { name: 'Death & Co', rating: 4.7 },
-            { name: 'Please Don\'t Tell (PDT)', rating: 4.6 },
-            { name: 'The Dead Rabbit', rating: 4.8 },
-            { name: 'Attaboy', rating: 4.5 },
-            { name: 'Employees Only', rating: 4.6 },
-          ],
-          hotels: [
-            { name: 'The Plaza Hotel', rating: 4.5, priceRange: '$$$$' },
-            { name: 'The St. Regis New York', rating: 4.7, priceRange: '$$$$' },
-            { name: 'The Carlyle', rating: 4.6, priceRange: '$$$$' },
-            { name: 'Ace Hotel New York', rating: 4.3, priceRange: '$$$' },
-            { name: 'The NoMad Hotel', rating: 4.5, priceRange: '$$$' },
-            { name: 'The Bowery Hotel', rating: 4.4, priceRange: '$$$' },
-            { name: 'citizenM New York Times Square', rating: 4.2, priceRange: '$$' },
-            { name: 'Pod 51 Hotel', rating: 4.0, priceRange: '$' },
-            { name: 'The Jane Hotel', rating: 3.9, priceRange: '$' },
-            { name: 'YOTEL New York', rating: 4.1, priceRange: '$$' },
-          ],
-        },
-        stayRecommendation: {
-          recommendedDays: 4,
-          reasoning:
-            'Based on traveler data, 4-5 days allows you to see major attractions, experience different neighborhoods, catch a Broadway show, and enjoy the food scene without feeling rushed.',
-        },
-        ciaFactbook: {
-          introduction:
-            'The United States is the world\'s third-largest country by size and population. The economy is the largest and most technologically powerful.',
-          geography:
-            'Total area: 9,833,517 sq km. Varied terrain including vast central plains, mountains in the west, hills and low mountains in the east.',
-          economy:
-            'The US has the most technologically powerful economy in the world, with a per capita GDP of $59,800. The economy is market-oriented.',
-          government:
-            'Constitution-based federal republic with strong democratic tradition. Three branches: executive, legislative, and judicial.',
-          terrorismIssues:
-            'The US faces threats from both domestic extremists and international terrorist organizations.',
-        },
-        stateDept: {
-          travelRisks: 'Exercise normal precautions when traveling to the United States.',
-          visaRequirements:
-            'Visa requirements vary by nationality. Many countries participate in the Visa Waiver Program (VWP) for tourism/business stays up to 90 days.',
-          vaccinations:
-            'No special vaccinations required. Routine vaccines recommended (MMR, DTaP, flu, etc.).',
-        },
-      }
-
-      setFactSheet(mockData)
+      // Use real search pipeline
+      const result = await searchLocation(query, creativeMode)
+      setFactSheet(result)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An unknown error occurred')
     } finally {

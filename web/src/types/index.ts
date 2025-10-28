@@ -85,15 +85,50 @@ export interface StateDeptInfo {
 }
 
 export interface FactSheet {
+  header: string
   location: Location
   creativeOverview?: string // Only when Creative Mode is ON
-  wikipedia?: WikipediaInfo
-  weather?: WeatherData
-  localHappenings?: LocalHappenings
-  foodAndLodging?: FoodAndLodging
-  stayRecommendation?: StayRecommendation
-  ciaFactbook?: CIAFactbook
-  stateDept?: StateDeptInfo
+  naming: string // how location got its name
+  famousPeople: string[]
+  majorHistory: string[]
+  recentEvents: string[]
+  weatherPast7DayAvg: {
+    tempC?: number | null
+    precipMm?: number | null
+    windKph?: number | null
+  }
+  weatherNext7DayAvg: {
+    tempC?: number | null
+    precipMm?: number | null
+    windKph?: number | null
+  }
+  seasonalClimate: string
+  routineEvents: string[]
+  upcomingEvents: string[]
+  attractions: string[]
+  restaurants: string[] // top 5
+  coffeeShops: string[] // top 5
+  bars: string[] // top 5
+  hotels: string[] // top 10
+  recommendedStay: string // deterministic heuristic
+  ciaSummary: {
+    introduction?: string
+    geography?: string
+    economy?: string
+    government?: string
+    terrorism?: string
+    error?: string
+    url?: string
+  }
+  stateDept: {
+    advisoryLevel?: string | null
+    notes?: string[]
+    error?: string
+    urls?: {
+      infoUrl: string
+      advisoryUrl: string
+    }
+  }
 }
 
 export interface SearchState {
