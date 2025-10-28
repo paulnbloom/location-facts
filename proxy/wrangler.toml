@@ -1,10 +1,19 @@
 name = "location-facts-proxy"
 main = "worker.js"
 compatibility_date = "2024-01-01"
+compatibility_flags = ["nodejs_compat"]
 
 # Routes
 # workers_dev = true will deploy to workers.dev subdomain
 workers_dev = true
+
+# Browser binding for Puppeteer
+browser = { binding = "BROWSER" }
+
+# KV namespace for caching
+[[kv_namespaces]]
+binding = "CACHE"
+id = "7db5c5749f5246df92995c83927a001d"
 
 # Optional: Set custom route if you have a domain
 # routes = [

@@ -1,7 +1,11 @@
 /**
- * CORS Proxy Worker for Location Facts
- * Allows fetching CIA Factbook and State Dept data from the browser
+ * CORS Proxy Worker with Puppeteer for Location Facts
+ * Renders JavaScript-heavy sites and caches results for 30 days
  */
+
+import puppeteer from '@cloudflare/puppeteer';
+
+const CACHE_TTL = 30 * 24 * 60 * 60; // 30 days in seconds
 
 export default {
   async fetch(request, env, ctx) {
@@ -54,28 +58,69 @@ export default {
       )
     }
 
-    try {
-      const response = await fetch(targetUrl, {
-        headers: {
-          'User-Agent': 'LocationFacts/1.0 (https://github.com/paulnbloom/location-facts)'
-        }
-      })
+    // Check cache first
+    const cacheKey = `rendered:${targetUrl}`
+    const cached = await env.CACHE.get(cacheKey)
 
-      const body = await response.text()
-
-      return new Response(body, {
-        status: response.status,
+    if (cached) {
+      return new Response(cached, {
         headers: {
           'Access-Control-Allow-Origin': '*',
           'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
           'Access-Control-Allow-Headers': '*',
-          'Content-Type': response.headers.get('Content-Type') || 'text/html',
-          'Cache-Control': 'public, max-age=3600' // Cache for 1 hour
+          'Content-Type': 'text/html',
+          'Cache-Control': `public, max-age=${CACHE_TTL}`,
+          'X-Cache': 'HIT'
+        }
+      })
+    }
+
+    try {
+      // Launch browser and render page
+      const browser = await puppeteer.launch(env.BROWSER);
+      const page = await browser.newPage();
+
+      // Set a reasonable timeout
+      await page.goto(targetUrl, {
+        waitUntil: 'networkidle0',
+        timeout: 30000
+      });
+
+      // Wait for content to render (CIA Factbook specific)
+      await page.waitForSelector('#introduction, #geography, #economy', {
+        timeout: 10000
+      }).catch(() => {
+        // Continue even if selector not found
+      });
+
+      // Get the rendered HTML
+      const html = await page.content();
+
+      await browser.close();
+
+      // Cache the rendered HTML for 30 days
+      ctx.waitUntil(
+        env.CACHE.put(cacheKey, html, {
+          expirationTtl: CACHE_TTL
+        })
+      );
+
+      return new Response(html, {
+        headers: {
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+          'Access-Control-Allow-Headers': '*',
+          'Content-Type': 'text/html',
+          'Cache-Control': `public, max-age=${CACHE_TTL}`,
+          'X-Cache': 'MISS'
         }
       })
     } catch (error) {
       return new Response(
-        JSON.stringify({ error: `Proxy error: ${error.message}` }),
+        JSON.stringify({
+          error: `Proxy error: ${error.message}`,
+          stack: error.stack
+        }),
         {
           status: 500,
           headers: {
