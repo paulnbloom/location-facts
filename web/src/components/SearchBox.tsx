@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import type { TypeaheadSuggestion } from '../types'
+import { searchCountries } from '../data/countries'
+import { searchLocations } from '../services/nominatim'
 
 interface SearchBoxProps {
   onSearch: (query: string) => void
@@ -21,9 +23,9 @@ export default function SearchBox({
   const [showSuggestions, setShowSuggestions] = useState(false)
   const [selectedIndex, setSelectedIndex] = useState(-1)
   const inputRef = useRef<HTMLInputElement>(null)
-  const debounceTimerRef = useRef<NodeJS.Timeout>()
+  const debounceTimerRef = useRef<NodeJS.Timeout | undefined>(undefined)
 
-  // Debounced typeahead - placeholder for now
+  // Debounced typeahead with countries + Nominatim
   useEffect(() => {
     if (query.length < 2) {
       setSuggestions([])
@@ -36,15 +38,43 @@ export default function SearchBox({
     }
 
     // Debounce: wait 300ms after user stops typing
-    debounceTimerRef.current = setTimeout(() => {
-      // TODO: Fetch suggestions from Nominatim API
-      // For now, show placeholder suggestions
-      const mockSuggestions: TypeaheadSuggestion[] = [
-        { displayName: 'New York, NY, USA', location: { city: 'New York', state: 'NY', country: 'USA' } },
-        { displayName: 'London, United Kingdom', location: { city: 'London', country: 'United Kingdom' } },
-      ].filter(s => s.displayName.toLowerCase().includes(query.toLowerCase()))
+    debounceTimerRef.current = setTimeout(async () => {
+      try {
+        // 1. Search countries first (synchronous, fast)
+        const countryMatches = searchCountries(query, 5)
 
-      setSuggestions(mockSuggestions)
+        // Convert country names to TypeaheadSuggestion format
+        const countrySuggestions: TypeaheadSuggestion[] = countryMatches.map((country) => ({
+          displayName: country,
+          location: {
+            country,
+          },
+        }))
+
+        // 2. Query Nominatim for cities/postal codes
+        const nominatimResults = await searchLocations(query, 5)
+
+        // 3. Merge: countries on top, then Nominatim results
+        // Remove any Nominatim results that match countries we already have
+        const countryNames = new Set(countryMatches)
+        const filteredNominatim = nominatimResults.filter(
+          (result) => !countryNames.has(result.location.country)
+        )
+
+        const mergedSuggestions = [...countrySuggestions, ...filteredNominatim].slice(0, 8)
+        setSuggestions(mergedSuggestions)
+      } catch (error) {
+        console.error('Error fetching typeahead suggestions:', error)
+        // On error, still show country matches if available
+        const countryMatches = searchCountries(query, 5)
+        const countrySuggestions: TypeaheadSuggestion[] = countryMatches.map((country) => ({
+          displayName: country,
+          location: {
+            country,
+          },
+        }))
+        setSuggestions(countrySuggestions)
+      }
     }, 300)
 
     return () => {

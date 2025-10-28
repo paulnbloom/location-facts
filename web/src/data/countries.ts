@@ -1,0 +1,272 @@
+// Canonical list of countries (UN member states + commonly recognized territories)
+// Alphabetically sorted for easy searching and maintenance
+
+export const COUNTRIES: string[] = [
+  'Afghanistan',
+  'Albania',
+  'Algeria',
+  'Andorra',
+  'Angola',
+  'Antigua and Barbuda',
+  'Argentina',
+  'Armenia',
+  'Australia',
+  'Austria',
+  'Azerbaijan',
+  'Bahamas',
+  'Bahrain',
+  'Bangladesh',
+  'Barbados',
+  'Belarus',
+  'Belgium',
+  'Belize',
+  'Benin',
+  'Bhutan',
+  'Bolivia',
+  'Bosnia and Herzegovina',
+  'Botswana',
+  'Brazil',
+  'Brunei',
+  'Bulgaria',
+  'Burkina Faso',
+  'Burundi',
+  'Cabo Verde',
+  'Cambodia',
+  'Cameroon',
+  'Canada',
+  'Central African Republic',
+  'Chad',
+  'Chile',
+  'China',
+  'Colombia',
+  'Comoros',
+  'Congo',
+  'Costa Rica',
+  'Croatia',
+  'Cuba',
+  'Cyprus',
+  'Czech Republic',
+  'Czechia',
+  'Democratic Republic of the Congo',
+  'Denmark',
+  'Djibouti',
+  'Dominica',
+  'Dominican Republic',
+  'East Timor',
+  'Ecuador',
+  'Egypt',
+  'El Salvador',
+  'Equatorial Guinea',
+  'Eritrea',
+  'Estonia',
+  'Eswatini',
+  'Ethiopia',
+  'Fiji',
+  'Finland',
+  'France',
+  'Gabon',
+  'Gambia',
+  'Georgia',
+  'Germany',
+  'Ghana',
+  'Greece',
+  'Grenada',
+  'Guatemala',
+  'Guinea',
+  'Guinea-Bissau',
+  'Guyana',
+  'Haiti',
+  'Honduras',
+  'Hungary',
+  'Iceland',
+  'India',
+  'Indonesia',
+  'Iran',
+  'Iraq',
+  'Ireland',
+  'Israel',
+  'Italy',
+  'Ivory Coast',
+  'Jamaica',
+  'Japan',
+  'Jordan',
+  'Kazakhstan',
+  'Kenya',
+  'Kiribati',
+  'Kosovo',
+  'Kuwait',
+  'Kyrgyzstan',
+  'Laos',
+  'Latvia',
+  'Lebanon',
+  'Lesotho',
+  'Liberia',
+  'Libya',
+  'Liechtenstein',
+  'Lithuania',
+  'Luxembourg',
+  'Madagascar',
+  'Malawi',
+  'Malaysia',
+  'Maldives',
+  'Mali',
+  'Malta',
+  'Marshall Islands',
+  'Mauritania',
+  'Mauritius',
+  'Mexico',
+  'Micronesia',
+  'Moldova',
+  'Monaco',
+  'Mongolia',
+  'Montenegro',
+  'Morocco',
+  'Mozambique',
+  'Myanmar',
+  'Namibia',
+  'Nauru',
+  'Nepal',
+  'Netherlands',
+  'New Zealand',
+  'Nicaragua',
+  'Niger',
+  'Nigeria',
+  'North Korea',
+  'North Macedonia',
+  'Norway',
+  'Oman',
+  'Pakistan',
+  'Palau',
+  'Palestine',
+  'Panama',
+  'Papua New Guinea',
+  'Paraguay',
+  'Peru',
+  'Philippines',
+  'Poland',
+  'Portugal',
+  'Puerto Rico',
+  'Qatar',
+  'Romania',
+  'Russia',
+  'Rwanda',
+  'Saint Kitts and Nevis',
+  'Saint Lucia',
+  'Saint Vincent and the Grenadines',
+  'Samoa',
+  'San Marino',
+  'Sao Tome and Principe',
+  'Saudi Arabia',
+  'Senegal',
+  'Serbia',
+  'Seychelles',
+  'Sierra Leone',
+  'Singapore',
+  'Slovakia',
+  'Slovenia',
+  'Solomon Islands',
+  'Somalia',
+  'South Africa',
+  'South Korea',
+  'South Sudan',
+  'Spain',
+  'Sri Lanka',
+  'Sudan',
+  'Suriname',
+  'Sweden',
+  'Switzerland',
+  'Syria',
+  'Taiwan',
+  'Tajikistan',
+  'Tanzania',
+  'Thailand',
+  'Timor-Leste',
+  'Togo',
+  'Tonga',
+  'Trinidad and Tobago',
+  'Tunisia',
+  'Turkey',
+  'Turkmenistan',
+  'Tuvalu',
+  'Uganda',
+  'Ukraine',
+  'United Arab Emirates',
+  'United Kingdom',
+  'United States',
+  'Uruguay',
+  'Uzbekistan',
+  'Vanuatu',
+  'Vatican City',
+  'Venezuela',
+  'Vietnam',
+  'Yemen',
+  'Zambia',
+  'Zimbabwe',
+]
+
+// Alternative names/aliases for better matching
+export const COUNTRY_ALIASES: Record<string, string> = {
+  'USA': 'United States',
+  'US': 'United States',
+  'America': 'United States',
+  'UK': 'United Kingdom',
+  'Britain': 'United Kingdom',
+  'Great Britain': 'United Kingdom',
+  'England': 'United Kingdom',
+  'Scotland': 'United Kingdom',
+  'Wales': 'United Kingdom',
+  'Northern Ireland': 'United Kingdom',
+  'UAE': 'United Arab Emirates',
+  'DRC': 'Democratic Republic of the Congo',
+  'ROC': 'Taiwan',
+  'PRC': 'China',
+  'DPRK': 'North Korea',
+  'ROK': 'South Korea',
+  'Swaziland': 'Eswatini',
+  'Burma': 'Myanmar',
+  'Holland': 'Netherlands',
+}
+
+/**
+ * Search for countries matching a query
+ * @param query - The search string
+ * @param limit - Maximum number of results (default: 5)
+ * @returns Array of matching country names
+ */
+export function searchCountries(query: string, limit: number = 5): string[] {
+  if (!query || query.length < 2) {
+    return []
+  }
+
+  const lowerQuery = query.toLowerCase()
+  const results: string[] = []
+
+  // Check for exact alias match first
+  const aliasMatch = COUNTRY_ALIASES[query] || COUNTRY_ALIASES[query.toUpperCase()]
+  if (aliasMatch && !results.includes(aliasMatch)) {
+    results.push(aliasMatch)
+  }
+
+  // Search through all countries
+  for (const country of COUNTRIES) {
+    if (results.length >= limit) break
+
+    const lowerCountry = country.toLowerCase()
+
+    // Skip if already included
+    if (results.includes(country)) continue
+
+    // Check for starts-with match (highest priority)
+    if (lowerCountry.startsWith(lowerQuery)) {
+      results.unshift(country) // Add to beginning
+      continue
+    }
+
+    // Check for contains match
+    if (lowerCountry.includes(lowerQuery)) {
+      results.push(country)
+    }
+  }
+
+  return results.slice(0, limit)
+}

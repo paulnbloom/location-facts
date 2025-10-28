@@ -9,12 +9,12 @@ function App() {
   const [error, setError] = useState<string | null>(null)
   const [factSheet, setFactSheet] = useState<FactSheetType | null>(null)
 
-  const handleSearch = async (query: string) => {
+  const handleSearch = async (_query: string) => {
     setIsLoading(true)
     setError(null)
 
     try {
-      // TODO: Implement actual API calls
+      // TODO: Implement actual API calls using _query
       // For now, create mock data
       await new Promise((resolve) => setTimeout(resolve, 1000)) // Simulate API call
 
